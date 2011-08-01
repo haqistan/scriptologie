@@ -1,0 +1,10 @@
+These are scripts from my bag of tricks that I've found useful over
+time.  Some of them are from a long time ago and my coding style has
+changed over time, so they are a bit uneven stylistically.
+
+Feel free to bug me about them.  They are all released under a 2-clause
+BSD license, present in this repo.
+
+
+--
+attila@stalphonsos.com | 0x4FFCBB9C | hack("free") or die;
