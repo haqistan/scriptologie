@@ -5,6 +5,9 @@ changed over time, so they are a bit uneven stylistically.
 Feel free to bug me about them.  They are all released under a 2-clause
 BSD license, present in this repo.
 
+Scripts in ths collection:
+
+* tomboy2org.pl - translate Tomboy/GNote-style XML notes into org-mode
 
 --
 attila@stalphonsos.com | 0x4FFCBB9C | hack("free") or die;
