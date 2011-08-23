@@ -2,8 +2,11 @@ These are scripts from my bag of tricks that I've found useful over
 time.  Some of them are from a long time ago and my coding style has
 changed over time, so they are a bit uneven stylistically.
 
-Feel free to bug me about them.  They are all released under a 2-clause
-BSD license, present in this repo.
+Feel free to bug me about them.  They are all released under a
+2-clause BSD license, present in this repo.
+
+I keep libraries in lib and scripts in bin.  All Perl sources have
+PODs of some kind.
 
 Scripts in ths collection:
 
