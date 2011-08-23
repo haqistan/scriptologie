@@ -44,7 +44,6 @@ Org - Emacs org-mode Perl Interface
   my $t_future = str2time($val) + 3600;
   $org->property('time-next-read' => $org->format_time($t_future));
 
-
 =head1 DESCRIPTION
 
 This module presents an OO interface the the Emacs org-mode text
@@ -65,7 +64,10 @@ use strict;
 use Carp;
 use Org::Ord;
 use base qw(Class::Data::Inheritable Class::Accessor);
+use vars qw($VERSION);
 use overload '""' => \&to_string;
+
+$VERSION='0.1.0';
 
 __PACKAGE__->mk_accessors(qw(parent kids drawers title));
 
