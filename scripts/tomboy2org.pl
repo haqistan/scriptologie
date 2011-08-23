@@ -2,7 +2,7 @@
 ##
 # tomboy2org.pl - convert tomboy-style XML notes into org-mode
 #
-# Time-stamp: <2011-08-01 11:51:29 snl@stalphonsos.com>
+# Time-stamp: <2011-08-10 14:09:18 attila@stalphonsos.com>
 ##
 # Contact: attila@stalphonsos.com | 0x4FFCBB9C
 # Encrypted/signed mail preferred.  ASCII armor uber alles.
@@ -53,7 +53,7 @@ BEGIN {
     $VERBOSE = 0;
     $DEFAULTS = {
     };
-    $VERSION = '0.1.0';
+    $VERSION = '0.1.1';
 }
 
 ## qchomp - trim leading and trailing whitespace and deal with quoted strings
@@ -72,19 +72,19 @@ sub qchomp {
 ##
 sub usage {
     my($msg) = @_;
-    pod2usage(-verbose => 2)            if $::VERBOSE && !defined($msg);
+    pod2usage(-verbose => 2)            if $VERBOSE && !defined($msg);
     if (defined($msg)) {
-        print STDERR "$::P: $msg\n"     if defined $msg;
+        print STDERR "$P: $msg\n"     if defined $msg;
     } else {
-        print STDERR "$::P: convert tomboy-style XML notes into org-mode\n";
+        print STDERR "$P v$VERSION - convert Tomboy-style XML notes into orgmode\n";
     }
-    print STDERR "usage: $::P [-options] [args]\n";
+    print STDERR "usage: $P [-options] [args]\n";
     print STDERR "       Standard options:\n";
     print STDERR "          -v|verbose      increment verbosity level\n";
     print STDERR "          -V|verbosity=n  set verbosity level to n\n\n";
     print STDERR "          -help           print this brief message\n";
     print STDERR "       To see the full documentation, try:\n\n";
-    print STDERR "           \$ $::P -help -verbose\n";
+    print STDERR "           \$ $P -help -verbose\n";
     exit(defined($msg)? 1:0);
 }
 
@@ -239,11 +239,12 @@ sub note_to_org {
     );
     $notebook ||= $args->{'default-notebook'} || 'notes';
     my $tfmt = $args->{'tstamp-fmt'} || '%Y-%m-%d %H:%M:%S %z';
+    my $tagtag = $args->{'tag-property'} || 'CATEGORY';
     my $tstamp = POSIX::strftime($tfmt,localtime(time));
     my $props =
         join(
             "\n",
-            ":TAGS:$notebook",
+            ":$tagtag:$notebook",
             ":original-filename:$filename",
             ":original-hostname:$host",
             ":import-time:$tstamp",
@@ -491,6 +492,13 @@ Indent for first line in paragraph; default is zero.
 Number of blank lines between paragraphs of text in an entry.
 Defaults to 1.
 
+=item -tag-property=name
+
+Set the orgmode property used for Tomboy "tags", which is really just
+the notebook name, if any.  The default is C<CATEGORY> which will do
+the right thing in orgmode most of the time.  Another choice might be
+C<TAGS>.
+
 =item -verbose (or -v)
 
 =item -verbosity=int (or -V=int)
@@ -542,6 +550,7 @@ B<Caterpillar>: I know, I have improved it.
 
 Z<>
 
+  0.1.1   10 Aug 11     attila  Fix in-line asterisks
   0.1.0   31 Jul 11     attila  Written
 
 =cut
