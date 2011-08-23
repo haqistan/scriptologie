@@ -5,12 +5,16 @@ changed over time, so they are a bit uneven stylistically.
 Feel free to bug me about them.  They are all released under a
 2-clause BSD license, present in this repo.
 
-I keep libraries in lib and scripts in bin.  All Perl sources have
-PODs of some kind.
+I keep libraries in lib and scripts in scripts.  All Perl sources have
+PODs of some kind.  Libraries generally use Makefile.PL.  I will
+probably change all of this over time.
 
-Scripts in ths collection:
+Scripts include:
 
-* tomboy2org.pl - translate Tomboy/GNote-style XML notes into org-mode
+* tomboy2org.pl - Translate Tomboy/GNote-style XML notes into org-mode
 
+Libraries include:
+
+* Org - Native Perl interface to the Emacs org-mode text file format
 --
 attila@stalphonsos.com | 0x4FFCBB9C | hack("free") or die;
