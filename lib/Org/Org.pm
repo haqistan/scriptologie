@@ -61,15 +61,26 @@ The C<Org> class and its instances support the following methods.
 
 package Org;
 use strict;
+use feature "switch";
 use Carp;
 use Org::Ord;
 use base qw(Class::Data::Inheritable Class::Accessor);
 use vars qw($VERSION);
 use overload '""' => \&to_string;
 
+##
+# # comment
+# <blank line>
+# * TITLE
+# text
+# :DRAWER-NAME:
+# :prop:val
+# :END:
+##
+
 $VERSION='0.1.0';
 
-__PACKAGE__->mk_accessors(qw(parent kids drawers title));
+__PACKAGE__->mk_accessors(qw(parent kids drawers title raw));
 
 =pod
 
@@ -119,10 +130,12 @@ sub init {
     my($self,$params) = @_;
     my $class = ref($self);
     my $tmp = $self->parent;
-    die("$class: invalid parent $tmp") if (defined($tmp) && $class->IsA($tmp));
+    die("$class: invalid parent $tmp")
+        if (defined($tmp) && !$class->IsA($tmp));
     $self->kids([]) unless defined($self->kids);
     $self->drawers({}) unless defined($self->drawers);
     $self->title("") unless defined($self->title);
+    $self->raw("") unless defined($self->raw);
     if ($params->{'file'}) {
         $self->parse_file($params->{'file'});
     } elsif ($params->{'content'}) {
@@ -131,13 +144,58 @@ sub init {
     return $self;
 }
 
+sub _blank {
+    my($self) = @_;
+    $self->kids([]);
+    $self->drawers({});
+    $self->title("");
+    $self->raw("");
+    return $self;
+}
+
+sub _init_parse {
+    my($self) = @_;
+}
+
+sub _parse_line {
+    my($self,$line) = @_;
+    given ($self->_parse_state) {
+        when (PARSE_INIT) {
+            if ($line =~ /^#/)
+        }
+    }
+}
+
+sub _finish_parse {
+}
+
 ############################################################################
 #
 # Exported API
 #
 ############################################################################
 
+sub parse_handle {
+    my($self,$handle) = @_;
+    my $raw = '';
+    eval {
+        $self->_init_parse();
+        while (defined(my $line = $handle->getline)) {
+            $raw .= $line;
+            $self->_parse_line($line);
+        }
+        $self->raw($raw);
+    };
+    if ($@) {
+        $self->_blank;
+        die($@);
+    }
+    return $self;
+}
+
 sub parse_file {
+    my($self,$filename) = @_;
+    
 }
 
 sub parse_string {
