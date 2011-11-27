@@ -1,0 +1,75 @@
+#!/usr/bin/perl
+##
+# post-receive - generic git post-receive hook
+#
+# This script will fire off a command when it sees a checkin on the
+# master branch and its IP address matches a desired hostname (like
+# www.foobar.com).
+##
+use strict;
+use warnings;
+use Cwd;
+use vars qw($SERVER $DEBUG $BUILD $IS_WEB_SERVER);
+
+sub setup {
+    $SERVER = 'cluefactory.com';
+    $DEBUG = 1;
+    $BUILD = 'push-content.pl -verbose';
+    $IS_WEB_SERVER =  0;
+    my $cwd = getcwd;
+    warn("# $0 running in $cwd\n")                              if $DEBUG;
+    do "post-receive-config.pl" if -f "./post-receive-config.pl";
+}
+
+sub is_web_server {
+    my $is = defined($SERVER) ? 0 : 1;
+    unless ($is) {
+        warn("# sussing is_web_server for $SERVER ...\n")       if $DEBUG;
+        open(MY_IP,"my_ip|") or die("my_ip? $!\n");
+        chomp(my $line = <MY_IP>);
+        my($iface,$ip) = split(/\s+/,$line);
+        warn("# iface $iface ip $ip\n")                         if $DEBUG;
+        close(MY_IP);
+        open(HOST,"host $SERVER|") or die("host $SERVER? $!\n");
+        while (defined($line = <HOST>)) {
+            chomp($line);
+            warn("# host: $line\n")                             if $DEBUG;
+            next unless $line =~ /^([\w\.]+)\shas\saddress\s([\d\.]+)$/;
+            my($name,$addr) = ($1,$2);
+            warn("# checking name $name ($addr) against $ip\n") if $DEBUG;
+            if ($addr eq $ip) {
+                warn("# we are $ip and so is $name\n")          if $DEBUG;
+                $is = 1;
+                last;
+            }
+        }
+        close(HOST);
+        $is = 1 if $IS_WEB_SERVER;
+    }
+    warn("# is_web_server => $is\n")                            if $DEBUG;
+    return $is;
+}
+
+MAIN: {
+    setup;
+    exit(0) unless is_web_server;
+    while (<STDIN>) {
+        chomp;
+        my($a,$b,$ref) = split();
+        if ($ref eq "refs/heads/master") {
+            warn("# firing off build on commit to master\n");
+            system("$BUILD &") if $BUILD;
+        }
+    }
+}
+
+##
+# Local variables:
+# mode: perl
+# tab-width: 4
+# perl-indent-level: 4
+# perl-continued-statement-offset: 4
+# indent-tabs-mode: nil
+# comment-column: 40
+# End:
+##

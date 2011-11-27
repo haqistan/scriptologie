@@ -1,0 +1,57 @@
+#!/usr/bin/perl
+##
+# post-receive - generic git post-receive hook
+#
+# This script will fire off a command when it sees a checkin on the
+# master branch and its IP address matches a desired hostname (like
+# www.foobar.com).
+##
+use strict;
+use warnings;
+use Cwd;
+use vars qw($DEBUG $BUILD $SERVER);
+
+sub setup {
+    $SERVER = undef;
+    $DEBUG = 1;
+    $BUILD = undef;
+    my $cwd = getcwd;
+    warn("# $0 running in $cwd\n")                              if $DEBUG;
+    do "./post-receive-config.pl" if -f "./post-receive-config.pl";
+    die("# $0: $@\n") if $@;
+}
+
+sub is_server {
+    my $is = defined($SERVER) ? 1 : 0;
+    warn("# $0 is_server => $is\n")
+        if $DEBUG;
+    return $is;
+}
+
+MAIN: {
+    setup;
+    exit(0) unless is_server;
+    while (<STDIN>) {
+        chomp;
+        my($a,$b,$ref) = split();
+        if ($ref eq "refs/heads/master") {
+            warn("# $0: firing off build on commit to master\n");
+            if ($BUILD) {
+                warn("# $0: $BUILD\n") if $DEBUG;
+                system("$BUILD") == 0
+                    or die("# $0: $BUILD: $@\n");
+            }
+        }
+    }
+}
+
+##
+# Local variables:
+# mode: perl
+# tab-width: 4
+# perl-indent-level: 4
+# perl-continued-statement-offset: 4
+# indent-tabs-mode: nil
+# comment-column: 40
+# End:
+##
