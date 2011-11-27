@@ -209,12 +209,14 @@ sub checkout_master {
     chdir($repo_name) or die("cd $tmp_dir/$repo_name: $!\n");
 }
 
+## copy_content - run the command to install this branch
+##
 sub copy_content {
     my($args) = @_;
     my $repo_name = get_arg($args,'repo');
     my $cmd = get_arg($args,"command",'');
     my $addl = join(' ',@{$args->{'_'}}) || '';
-    if (-f "Makefile") {
+    if (!$cmd && (-f "Makefile")) {
         $cmd = "make $addl install";
     }
     if (!$cmd) {
@@ -227,6 +229,8 @@ sub copy_content {
     }
 }
 
+## cleanup_tmp - get rid of our tmp directory
+##
 sub cleanup_tmp {
     my($args) = @_;
     my $tmp_dir = stashed($args,'tmp_dir',undef);
@@ -236,6 +240,8 @@ sub cleanup_tmp {
     }
 }
 
+## afterwards - run any after-command that was specified
+##
 sub afterwards {
     my($args) = @_;
     my $cmd = get_arg($args,'after-command','');
@@ -264,7 +270,7 @@ push-content - push content from a git repo to its final destination
 
   # check out the master branch of /data/repos/foo.com.git
   # into a temp directory and run "make install" in it
-  $ push-content.pl -repo-root=/data/repos -repo=foo.com
+  $ push-content.pl -repo-root=/data/repos -repo=foo.com [args to make]
 
 =head1 DESCRIPTION
 
@@ -302,7 +308,9 @@ checkout; by default it is C</tmp>.
 
 =item -command=cmd
 
-Use this command instead of C<make install>.
+Use this command instead of C<make install>.  In this case positional
+arguments are ignored, since you can just specify them as
+C<-command="foo args">.
 
 =item -after-command=cmd
 
