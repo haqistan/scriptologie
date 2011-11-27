@@ -1,0 +1,6 @@
+#! perl
+##
+$DEBUG = 1;
+$SERVER = 1;
+$BUILD = qq|push-content -repo-root=/data/repo/git -repo=CHANGEME VERBOSE=-v|;
+1;

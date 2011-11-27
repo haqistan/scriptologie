@@ -13,7 +13,7 @@ use vars qw($DEBUG $BUILD $SERVER);
 
 sub setup {
     $SERVER = undef;
-    $DEBUG = 1;
+    $DEBUG = 0;
     $BUILD = undef;
     my $cwd = getcwd;
     warn("# $0 running in $cwd\n")                              if $DEBUG;
@@ -43,6 +43,7 @@ MAIN: {
             }
         }
     }
+    exit(0);
 }
 
 ##
