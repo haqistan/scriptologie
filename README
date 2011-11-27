@@ -12,6 +12,9 @@ probably change all of this over time.
 Scripts include:
 
 * tomboy2org.pl - Translate Tomboy/GNote-style XML notes into org-mode
+* post-receive-* - Git post-receive hooks
+* push-content.pl - Git-aware content "push" from post-receive script
+* overcopy.pl - carefully copy from one tree to another
 
 Libraries include:
 
