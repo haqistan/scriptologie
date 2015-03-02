@@ -54,6 +54,7 @@ sub usage {
     print STDERR "          -v|verbose      increment verbosity level\n";
     print STDERR "          -help           print this brief message\n";
     print STDERR "          -patches=dir    write patches to dir\n";
+    print STDERR "          -files=dir      drop binary/new files in dir\n";
     print STDERR "          -overwrite      overwrite existing patch files\n";
     print STDERR "          -srcdir=dir     look in dir for source files\n";
     print STDERR "          -n|dry-run      just say what we would do\n\n";
@@ -125,18 +126,16 @@ sub reset_patch {
     $state->{' base name'} = '';        # base name of patch
     $state->{' content'} = '';          # content of patch
     $state->{' saw names'} = 0;         # which of ---, +++ have we seen?
+    $state->{' a dir'} = '';
+    $state->{' b dir'} = '';
+    $state->{' style'} = '';
 }
 
 # patch_file_name - return the name to be used for the patch file
 #
 sub patch_file_name {
     my($state,$base) = @_;
-    my $name = 'patch-';
-    if ($base =~ /^\./) {
-        $name .= 'dot_';
-        $base = substr($base,1);
-    }
-    $name .= $base;
+    my $name = 'patch-' . $base;
     $name =~ s/\/+/_/g;
     $name =~ s/\./_/g;
     return $name;
@@ -147,16 +146,20 @@ sub patch_file_name {
 sub start_patch {
     my($state,$start) = @_;
     chomp($start);
-    my $lno = $state->{' line count'};
-    my($a,$b) = ($1,$2) if $start =~ /^diff\s+--git\s+a\/(\S+)\s+b\/(\S+)$/;
     my $ok = 0;
+    my $lno = $state->{' line count'};
+    my($da,$a,$db,$b) = ($1,$2,$3,$4)
+        if $start =~ /^diff\s.*\s+([^\/]+)\/(\S+)\s+([^\/]+)\/(\S+)$/;
     if (!defined($a) || !defined($b)) {
-        warn("$P: input line #$lno: malformed header (ignored): $start\n");
+        warn("$P: #$lno: malformed header (ignored): $start\n");
     } elsif ($a ne $b) {
-        warn("$P: input line #$lno: a ($a) and b ($b) do not match\n");
+        warn("$P: #$lno: a ($a) and b ($b) do not match\n");
     } else {
         $state->{' base name'} = $a;
         $state->{' content'} = '';
+        $state->{' a dir'} = $da;
+        $state->{' b dir'} = $db;
+        $state->{' style'} = ($start =~ /--git/) ? 'git': 'diff';
         $ok = 1;
     }
     return $ok;
@@ -171,16 +174,54 @@ sub ts {
     return POSIX::strftime($fmt, localtime($t));
 }
 
-# file_ts - if 2nd arg names an existing file return its mtime
+# src - return path to source file if we can find it
 #
-sub file_ts {
+sub src {
     my($state,$fn) = @_;
     my $path = $fn if -f $fn;
     if (!$path && defined($state->{'srcdir'})) {
         $path = join('/',$state->{'srcdir'},$fn);
     }
+    return $path if -f $path;
+    return $fn;
+}
+
+# file_ts - if 2nd arg names an existing file return its mtime
+#
+sub file_ts {
+    my($state,$fn) = @_;
+    my $path = src($state,$fn);
     return ts($state,time) unless -f $path;
     return ts($state,(stat($path))[8]);
+}
+
+# copy_file - copy $src to $dst w/optional $mode + mkdir -p
+#
+sub copy_file {
+    my($state,$src,$dst,$mode) = @_;
+    my @parts = split(/\//,$dst);
+    pop(@parts);
+    my $dir = join('/',@parts);
+    my $verbo = 'copied';
+    unless ((-d $dir) && !$state->{'dry-run'}) {
+        die("$P: directory '$dir' does not exist; specify -mkdir to create\n")
+            unless $state->{'mkdir'};
+        system("mkdir -p $dir") == 0
+            or die("$P: mkdir -p $dir: $?\n");
+    }
+    if (!(-f $dst) || $state->{'overwrite'}) {
+        if ($state->{'dry-run'}) {
+            $verbo = '[DRY-RUN] would copy';
+        } else {
+            system("cp $src $dst") == 0
+                or die("$P: cp $src $dst: $?\n");
+            $verbo = 'copied';
+        }
+    }
+    if (!$state->{'dry-run'}) {
+        chmod($mode,$dst) if defined($mode);
+    }
+    return $verbo;
 }
 
 # accum_patch - accumulate content into a patch
@@ -199,6 +240,30 @@ sub accum_patch {
             }
             $line = "--- $name\t$date\n";
             $state->{' saw names'} = 1;
+        } elsif ($line =~ /^Binary\sfiles\sa\/(\S+)\sand\sb\/(\S+)\sdiffer/) {
+            my($nm,$n2) = ($1,$2);
+            return q{quatsch! binary file names should be the same}
+                unless ($nm eq $n2);
+            my $path = src($state,$nm);
+            if ((-f $path) && (-d $state->{'files'})) {
+                # put the source file in files/ instead
+                my $dest = join('/',$state->{'files'},$nm);
+                my $verbo = copy_file($state,$path,$dest);
+                return qq{$verbo to $dest};
+            }
+        } elsif (($line =~ /^new file mode ([0-7]+)/) &&
+                 (-d $state->{'files'})) {
+            my $omode = $1;
+            my $mode = oct($omode);
+            my $nm = $state->{' base name'};
+            my $path = src($state,$nm);
+            if (!(-f $path)) {
+                return qq{cannot find src $path - skipped};
+            } else {
+                my $dest = join('/',$state->{'files'},$nm);
+                my $verbo = copy_file($state,$path,$dest,$mode);
+                return qq{$verbo to $dest (mode $omode)};
+            }
         }
     } elsif ($state->{' saw names'} == 1) {
         if ($line =~ /^\+\+\+\s(\S+)$/) {
@@ -212,11 +277,12 @@ sub accum_patch {
             $line = "+++ $name\t$date\n";
         } else {
             my $lno = $state->{' line count'};
-            warn("$P: input line #$lno: was expecting +++ after --- ...\n");
+            warn("$P: #$lno: was expecting +++ after --- ...\n");
         }
         $state->{' saw names'} = 2;
-    } # else nothing
+    }
     $state->{' content'} .= $line;
+    return undef;
 }
 
 # finish_patch - spit out a complete patch file
@@ -262,11 +328,22 @@ sub diffsplit {
     $state->{' npatches'} = 0;
     while (defined(my $line = <STDIN>)) {
         ++$state->{' line count'};
-        if ($line =~ /^diff\s+--git/) {
+        if ($line =~ /^diff\s+\S+/) {
             finish_patch($state) if $inside;
             $inside = start_patch($state,$line);
         } elsif ($inside) {
-            accum_patch($state,$line);
+            my $why = accum_patch($state,$line);
+            if ($why) {
+                # accum_patch() can decide it doesn't like what it
+                # sees and abort the patch this way.
+                if ($VERBOSE) {
+                    my $lno = $state->{' line count'};
+                    my $nm = $state->{' base name'};
+                    warn("$P: #$lno: aborting current patch '$nm': $why\n");
+                }
+                reset_patch($state);
+                $inside = 0;
+            }
         }
     }
     finish_patch($state) if $inside;
@@ -332,6 +409,12 @@ Do not write anything, just say what you would've done.
 If specified look in C<dir> for source files when trying to come up
 with timestamps.  Kind of lame but better than nothing.  Defaults to
 the current working directory.
+
+=item -files=dir
+
+If specified then binary files will not get patches, their contents
+will be dropped into C<dir> with whatever subdirectory structure they
+have preserved.
 
 =item -help
 
