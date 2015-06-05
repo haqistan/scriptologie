@@ -1,0 +1,521 @@
+#!/usr/bin/perl
+##
+# djb2zone - translate djbdns-style data into BIND-style zone files
+#
+# See the POD at EOF for documentation and license.
+##
+use strict;
+use warnings;
+use Pod::Usage;
+use vars qw($P $COPY_YEARS $YEAR_WRITTEN $VERBOSE $DEFAULTS $VERSION $ALIASES);
+use POSIX qw(strftime);
+
+##
+## attila's ye olde scriptie boilerplate
+##
+
+BEGIN {
+    ($P) = reverse(split('/',$0));
+    my $yyyy = 1900+(localtime(time))[5];
+    $YEAR_WRITTEN = 2015;
+    $COPY_YEARS = sprintf(
+        ($yyyy == $YEAR_WRITTEN) ? q{%d} : q{%d-%d}, $YEAR_WRITTEN, $yyyy
+    );
+    $VERBOSE = 0;
+    $DEFAULTS = {
+        'soa-ttl' => 300,
+        'soa-email' => 'hostmaster',
+        'soa-nxttl' => 300,
+        'soa-refresh' => 900,
+        'soa-retry' => 900,
+        'soa-expiry' => 9000,
+        'ttl' => 300,
+        'mx-dist' => 10,
+    };
+    $ALIASES = {
+        'v' => 'verbose',
+        'h' => 'help',
+    };
+    $VERSION = '0.1.0';
+}
+
+# qchomp - trim leading and trailing whitespace and deal with quoted strings
+#
+sub qchomp {
+    my $str = shift(@_);
+    while ($str =~ /^\s*([\"\'])(.*)\1\s*$/) {
+        $str = $2;
+    }
+    $str =~ s/^\s+//;
+    $str =~ s/\s+$//;
+    return $str;
+}
+
+# usage - dump a usage message and die
+#
+sub usage {
+    my($msg) = @_;
+    pod2usage(-verbose => 2)            if $VERBOSE && !defined($msg);
+    if (defined($msg)) {
+        print STDERR "$P: ERROR: $msg\n"     if defined $msg;
+    } else {
+        print STDERR "$P: translate djbdns-style data into BIND-style zones\n";
+    }
+    print STDERR "usage: $P [-options] [args]\n";
+    print STDERR "       Options:\n";
+    print STDERR "          --version           show version and copyright\n";
+    print STDERR "          -v --verbose        increment verbosity level\n";
+    print STDERR "          -h --help           print this brief message\n";
+    print STDERR "       To see the full documentation, try:\n\n";
+    print STDERR "           \$ $P --help --verbose\n";
+    exit(defined($msg)? 1:0);
+}
+
+# parse_argv - simplistic and effective CLA parser
+#
+# We turn @ARGV into a hashref, with the options given as the keys.
+#
+# If called with no args we start with an empty hashref; otherwise our
+# argument should be a hashref and it becomes the starting point for
+# our final product.  Double-dash options can have values, e.g.
+# --option=val; if none is given then the option is treated as an
+# auto-increment/bool option.  Single-dash options are single-letter
+# as per ancient Unix custom and are split if they contain multiple
+# options, e.g. -vcd is shorthand for -v -c -d.
+#
+# The special 'option' name '_' (underscore) collects any non-option
+# arguments into an arrayref; you cannot have an option named underscore.
+#
+# If we are given an argument then the keys and values in it will be
+# starting points / defaults (overriding $DEFAULTS).  If options take
+# multiple values (because they can be specified multiple times) then
+# initialize then to arrayrefs, e.g.
+#
+#    my $args = parse_argv({ '_' => [], 'multiple-values' => [] });
+#
+# If the user specified
+#
+#    $ whatever --multiple-values=a --multiple-values=b
+#
+# you'll get back a hashref with 'multiple-values' => ['a','b']
+#
+# If instead a hashref is given as the value then the option's value
+# will be parsed as key:val, so
+#
+#    $args = parse_argv({ 'property' => {} });
+#
+# invoked with
+#
+#    $ whatever --property=color:black --property=size:small
+#
+# will result in a hashref with
+#
+#    'property' => { 'color' => 'black', 'size' => 'small' }
+#
+# Otherwise options have scalar values.  If no value is given on the
+# command line the value is assumed to be an int and is incremented.
+# This means that invoking us like so will cause an error at runtime:
+#
+#    $ whatever --foo=bar --foo
+#
+# Since the first instance of --foo set its value to 'bar' and the
+# second one will try to increment a string.
+#
+# After parsing @ARGV we apply any aliases in the global $ALIASES
+# hashref, which defines aliases in the option namespace.  By default
+# we have: 'v' => 'verbose', 'h' => 'help'.  After aliases, the
+# $DEFAULTS hashref is applied, which maps option names to default
+# values.  Finally we check for the special option name 'verbose' and
+# set the global $VERBOSE to its value.  If the special option
+# 'debug-options' is present we dump out the results of our work at
+# the very end.
+#
+sub parse_argv {
+    my $args;
+    if (@_ && (ref($_[0]) eq 'HASH')) {
+        $args = shift(@_);
+    } else {
+        $args = { '_' => [] };
+    }
+    my @argv = @_;
+    foreach my $arg (@argv) {
+        $arg =~ s/^\s+//;
+        $arg =~ s/\s+$//;
+        next unless length $arg;
+        if ($arg =~ /^(--[^=]+?)[=](.*)$/) {
+            my($k,$v) = ($1,qchomp($2));
+            $k =~ s/^-+//;
+            if ($k ne '_') {
+                if (!exists($args->{$k}) ||
+                    (ref($args->{$k}) !~ /^(ARRAY|HASH)$/)) {
+                    $args->{$k} = $v;
+                } elsif (ref($args->{$k}) eq 'HASH') {
+                    my($kk,$vv) = split(/:/,$v,2);
+                    $args->{$k}->{$kk} = $vv;
+                } else {
+                    push(@{$args->{$k}}, $v);
+                }
+            } else {
+                $args->{$k} = [] unless defined $args->{$k};
+                push(@{$args->{$k}}, $v);
+            }
+        } elsif ($arg =~ /^(--.*)$/) {
+            my $k = qchomp($1);
+            $k =~ s/^-+//;
+            if ($k ne '_') {
+                ++$args->{$k};
+            } else {
+                usage(qq{Cannot have an option named underscore});
+            }
+        } elsif ($arg =~ /^-([^\-]+)$/) {
+            ++$args->{$_} foreach (grep { $_ ne '_' } split('',qchomp($1)));
+        } else {
+            $args->{'_'} = [] unless defined $args->{'_'};
+            push(@{$args->{'_'}}, $arg);
+        }
+    }
+    # Now apply option aliases
+    foreach (keys(%$ALIASES)) {
+        $args->{$ALIASES->{$_}} = $args->{$_}
+            if (defined($args->{$_}) && !defined($args->{$ALIASES->{$_}}))
+    }
+    # Next apply defaults, so aliases can take effect
+    foreach (keys(%$DEFAULTS)) {
+        $args->{$_} = $DEFAULTS->{$_} unless defined($args->{$_});
+    }
+    # Finally some skulduggery
+    $VERBOSE = $args->{'verbose'};
+    # All done
+    if (defined($args->{'debug-options'})) {
+        use Data::Dumper;
+        local $Data::Dumper::Terse = 1;
+        local $Data::Dumper::Indent = 0;
+        warn(sprintf("$P: DEBUG-OPTIONS: '%s' => %s\n",$_,Dumper($args->{$_})))
+             foreach (sort(keys(%$args)));
+    }
+    return $args;
+}
+
+##
+## Application Logic
+##
+
+# These subs should be a little smarter
+
+sub _opt { 
+    my($args,$name,$backstop) = @_;
+    my $opt = $args->{$name} if defined($args->{$name});
+    $opt = undef if (((ref($opt) eq 'ARRAY') && !@$opt) ||
+                     ((ref($opt) eq 'HASH') && !%$opt));
+    $opt ||= $DEFAULTS->{$name} if exists($DEFAULTS->{$name});
+    $opt ||= &$backstop() if defined($backstop);
+    return $opt;
+}
+
+sub get_serial {
+    _opt(shift,'soa-serial',sub {strftime("%Y%m%d%H%M%S",localtime(time));});
+}
+
+sub get_refresh { _opt(shift,'soa-refresh'); }
+sub get_retry { _opt(shift,'soa-retry'); }
+sub get_expiry { _opt(shift,'soa-expiry'); }
+sub get_nxttl { _opt(shift,'soa-nxttl'); }
+
+our %DATA = ();
+
+sub emit {
+    my @topd = reverse(split(/\./,$_[0]));
+    shift(@topd) unless $topd[0];
+    while (@_) {
+        my $i = @_;
+        last if defined($_[--$i]);
+        pop(@_);
+    }
+    my $record = join("\t",@_);
+    my($last,$top) = @topd;
+    my $key = "${top}.${last}";
+    $DATA{$key} ||= [];
+    push(@{$DATA{$key}}, $record);
+}
+
+sub spew {
+    my($args) = @_;
+    foreach my $key (sort(keys %DATA)) {
+        my $fh = \*STDOUT;
+        my $commented = 0;
+        if ($args->{'separate'}) {
+            my $dir = $args->{'dir'} || '.';
+            my $filename = "${dir}/${key}";
+            $fh = IO::File->new("> $filename") or die("$filename: $!");
+            if ($args->{'origin'}) {
+                my $ttl = _opt($args,'ttl');
+                print $fh "; $key\n"; $commented = 1;
+                print $fh '$ORIGIN '.$key.".\n";
+                print $fh '$TTL '.$ttl."\n";
+            }
+        }
+        print $fh "; $key\n" unless $commented;
+        foreach my $rec (@{$DATA{$key}}) {
+            print $fh "$rec\n";
+        }
+        $fh->close() if $args->{'separate'};
+    }
+}
+
+sub convert_line {
+    my($args,$line) = @_;
+    my $char0 = substr($line,0,1);
+    my @fields = split(/:/,substr($line,1));
+    if ($char0 eq '.') {
+        # SOA, NS, A
+        my($fqdn,$ip,$x,$ttl,$timestamp,$lo) = @fields;
+        my $opt_x = _opt($args,'ns-a');
+        $x = $opt_x if $opt_x;
+        my $nssub = _opt($args,'ns-subdomain');
+        $nssub = 'ns' if (!exists($args->{'ns-subdomain'}));
+        $nssub = ".${nssub}" if $nssub;
+        $nssub ||= "";
+        my $name = "${x}${nssub}.${fqdn}.";
+        my $fqdn_ = ($fqdn =~ /\.$/) ? "$fqdn" : "${fqdn}.";
+        $ttl ||= _opt($args,'soa-ttl');
+        my $serial = get_serial($args);;
+        my $refresh = get_refresh($args);
+        my $retry = get_retry($args);
+        my $expiry = get_expiry($args);
+        my $nxttl = get_nxttl($args);
+        my $hm = _opt($args,'soa-email');
+        emit($fqdn_,$ttl,'IN','SOA',$name,"${hm}.${fqdn}",$serial,$refresh,$retry,$expiry,$nxttl);
+        emit($fqdn_,$ttl,'IN','NS',$name);
+        emit($name,$ttl,'IN','A',$ip);
+    } elsif ($char0 eq '&') {
+        # NS, A
+        my($fqdn,$ip,$x,$ttl,$timestamp,$lo) = @fields;
+        $ttl ||= _opt($args,'ttl');
+        my $fqdn_ = ($fqdn =~ /\.$/) ? "$fqdn" : "${fqdn}.";
+        my $opt_x = _opt($args,'ns-a');
+        $x = $opt_x if $opt_x;
+        my $nssub = _opt($args,'ns-subdomain');
+        $nssub = 'ns' if (!exists($args->{'ns-subdomain'}));
+        $nssub = ".${nssub}" if $nssub;
+        $nssub ||= "";
+        my $name = "${x}${nssub}.${fqdn}";
+        emit($fqdn_,$ttl,'IN','NS',$name);
+        emit($name,$ttl,'IN','A',$ip);
+    } elsif ($char0 eq '=') {
+        # A, PTR
+        my($fqdn,$ip,$ttl,$timestamp,$lo) = @fields;
+        $ttl ||= _opt($args,'ttl');
+        my($a,$b,$c,$d) = split(/\./,$ip);
+        my $name = "${d}.${c}.${b}.${a}.in-addr.arpa";
+        emit($fqdn,$ttl,'IN','A',$ip);
+        emit($name,$ttl,'IN','PTR',$fqdn);
+    } elsif ($char0 eq '+') {
+        # A
+        my($fqdn,$ip,$ttl,$timestamp,$lo) = @fields;
+        $ttl ||= _opt($args,'ttl');
+        emit($fqdn,$ttl,'IN','A',$ip);
+    } elsif ($char0 eq '@') {
+        # MX, A
+        my($fqdn,$ip,$x,$dist,$ttl,$timestamp,$lo) = @fields;
+        $ttl ||= _opt($args,'ttl');
+        $dist ||= _opt($args,'mx-dist');
+        my $name = "${x}.mx.${fqdn}." if defined($x);
+        $name ||= "mx.${fqdn}";
+        emit($fqdn,$ttl,'IN','MX',$dist,$name);
+        emit($name,$ttl,'IN','A',$ip);
+    } elsif ($char0 eq '-') {
+        # no-op
+    } elsif ($char0 eq "'") {
+        # TXT
+        my($fqdn,$s,$ttl,$timestamp,$lo) = @fields;
+    } elsif ($char0 eq '^') {
+        # PTR
+        my($fqdn,$p,$ttl,$timestamp,$lo) = @fields;
+    } elsif ($char0 eq 'C') {
+        # CNAME
+        my($fqdn,$p,$ttl,$timestamp,$lo) = @fields;
+    } elsif ($char0 eq 'Z') {
+        # SOA
+        my($fqdn,$mname,$rname,$ser,$ref,$ret,$exp,$min,$ttl,$timestamp,$lo) =
+            @_;
+    } else {
+        my $line_no = $args->{' line_no'};
+        die("input line $line_no: unsupported type code: '$char0'");
+    }
+}
+
+sub version {
+    print "$P v.$VERSION\n\n";
+    pod2usage(-verbose=> 99,-sections => [qw(LICENSE)]);
+    exit(0);
+}
+
+MAIN: {
+    my $args = parse_argv({'_' => []}, @ARGV);
+    version() if $args->{'version'};
+    usage() if $args->{'help'};
+    $args->{' line_no'} = 0;
+    while (defined(my $line = <STDIN>)) {
+        ++$args->{' line_no'};
+        chomp($line);
+        print "; $line\n" if $args->{'show'};
+        convert_line($args,$line);
+    }
+    spew($args);
+    exit(0);
+}
+
+__END__
+
+=pod
+
+=head1 NAME
+
+djb2bind - translate djbdns-style data files into BIND-style zones
+
+=head1 SYNOPSIS
+
+  # pretty much always the same:
+  $ djb2bind --separate --dir=/var/nsd/zones < /var/service/tinydns/root/data
+
+=head1 DESCRIPTION
+
+This filter translates the plain text data files used in the C<djbdns>
+DNS server into C<BIND>-style zone data files suitable for use with
+L<nsd> and other C<BIND>-compatible DNS servers.
+
+It accepts no filenames as arguments, instead only processing standard
+input.  By default it produces output on standard output; it
+segregates the input data into zones based on the last two components
+of the domain name in question, so e.g. all C<bar.com> records will
+appear in the output before all C<foo.com> records.  It can also spit
+out one separate file per zone into a directory of the user's choice.
+
+=head1 OPTIONS
+
+We accept the following optionology:
+
+=over 4
+
+=item --verbose (or -v)
+
+Be quiet about everything but errors.
+
+=item --help (or -h)
+
+Print a short usage message.  If you specify -verbose, you get this
+man page.
+
+=item --version
+
+Print our version and exit.
+
+=item --separate
+
+Spit out one separate zone file for each zone we see in the input.
+
+=item --dir=dir
+
+If C<--separate> is given, write each separate zone file to the
+given directory.  Otherwise they will be written to the current
+working directory.
+
+=item --origin
+
+Emit an C<$ORIGIN> directive in the resulting zone file.
+Only really makes sense combined with C<--separate>.
+
+=item --soa-ttl=secs
+
+=item --soa-serial=serial
+
+=item --soa-email=name
+
+=item --soa-refresh=secs
+
+=item --soa-retry=secs
+
+=item --soa-expiry=secs
+
+=item --soa-nxttl=secs
+
+These options all set the values for the various fields of an C<SOA>
+record.  By default the C<--soa-serial> option defaults to the current
+date and time formatted with the L<strftime> format C<%Y%m%d%H%M%S>.
+The default for C<soa-email> is C<hostmaster>.
+
+=item --ttl=secs
+
+Set the default TTL for records we emit.
+
+=item --mx-dist=int
+
+Set the default MX distance for any MX records encountered; if there
+is a C<dist> field in the input record then its value will be used
+instead (but frequently there is not).
+
+=item --ns-a=name
+
+C<djbdns> gives names to nameservers like C<a.ns.example.org>.  We
+carry forward whatever conventions are embedded in the data stream,
+but when we have to come up with a name server name this option's
+value sets the default name.  The default is C<a>.
+
+=item --ns-subdomain=name
+
+Given that the C<--ns-a> option exists, this option allows further
+control over the name of nameservers.  If an empty value is specified
+then no third-level domain is used, e.g.
+
+  $ djb2zone --ns-a=dns --ns-subdomain= ...
+
+Will use the name C<dns.example.org> (assuming the data is for
+C<example.org>) as the default nameserver name.  If you specify
+another value, e.g.
+
+  $ djb2zone --ns-a=srv1 --ns-subdomain=dns ...
+
+The dot between C<srv1> and C<dns> will be inserted automatically,
+e.g. C<srv1.dns.example.org>.
+
+=back
+
+=head1 VERSION HISTORY
+
+B<Alice>: Well I must say I've never heard it that way before...
+
+B<Caterpillar>: I know, I have improved it. 
+
+Z<>
+
+  0.1.0   04 MAY 15    attila   written
+
+=head1 LICENSE
+
+Copyright (C) 2015 by attila <attila@stalphonsos.com>
+
+Permission to use, copy, modify, and distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL
+WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL
+DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR
+PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
+=cut
+
+##
+# Local variables:
+# mode: perl
+# tab-width: 4
+# perl-indent-level: 4
+# perl-continued-statement-offset: 4
+# indent-tabs-mode: nil
+# comment-column: 40
+# End:
+##
