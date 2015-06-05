@@ -23,6 +23,7 @@ Scripts include:
 
 Libraries include:
 
-* Org - Native Perl interface to the Emacs org-mode text file format
---
-attila@stalphonsos.com | 0xE6CC1EDB | hack("free") or die;
+* lib/Org - Native Perl interface to the Emacs org-mode text file format
+
+----
+`attila@stalphonsos.com | 0xE6CC1EDB | hack("free") or die;`
